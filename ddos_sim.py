@@ -1,7 +1,7 @@
 import random
 import sys
 import getopt
-
+import pandas as pd
 
 def printHelp():
     print("\n###################"
@@ -58,7 +58,7 @@ def defaultCon(n_bots, band, perc, rand):
 
 #Vulnerable DNS for the amplification
 def dns(bot_load, amp_rate):
-    print("Bots -> DNS        : ", round(bot_load, 2))
+    #print("Bots -> DNS        : ", round(bot_load, 2))
     return bot_load * amp_rate
 
 
@@ -73,47 +73,39 @@ def reactionClock(clock, reaction):
 
 #Check if the server is down and returns why
 def isDown(link, attack_load, attack_connections, connections):
-    if attack_load > link and attack_connections <= connections:
-        return "band"
-    elif attack_connections > connections and attack_load <= link:
-        return "con"
-    elif attack_load > link and attack_connections > connections:
-        return "both"
+    if attack_load > link or attack_connections > connections:
+        return 1
     else:
         return 0
 
 
 #Firewall that is going to filter the attack
-def firewall(method, attack_load, default_traffic, block_status, link, att_con=0, def_con=0, con=0):
-    if method == "dns_amp":
-        print("DNS -> Firewall    : ", round(attack_load + default_traffic, 2))
+def firewall(method, attack_load, default_traffic, block_status, link, row, att_con=0, def_con=0, con=0):
+    inbound = round(attack_load + default_traffic, 2)
+    row.append(inbound)
+    '''if method == "dns_amp":
+        print("DNS -> Firewall    : ", inbound)
     elif method == "syn_flood":
-        print("Bots -> Firewall   : ", round(attack_load + default_traffic, 2))
+        print("Bots -> Firewall   : ", inbound)'''
     multi = abs(block_status - 1)
     target_load = (multi * attack_load) + default_traffic
-    print("Firewall -> Target : ", round(target_load, 2))
+    row.append(round(target_load, 2))
+    #print("Firewall -> Target : ", round(target_load, 2))
     target_con = (multi * att_con) + def_con
     s_down = isDown(link, target_load, target_con, con)
-    if s_down == "band":
-        print("Missing bandwidth  : ", round(target_load - link, 2))
-        if method == "syn_flood":
-            print("Remaining connections: ", con - target_con)
-        print("Server is          :  DOWN!!!")
-    elif s_down == "con":
-        print("Remaining bandwidth: ", round(link - target_load, 2))
-        if method == "syn_flood":
-            print("Missing connections: ", target_con - con)
-        print("Server is          :  DOWN!!!")
-    elif s_down == "both":
-        print("Missing bandwidth  : ", round(target_load - link, 2))
-        if method == "syn_flood":
-            print("Missing connections: ", target_con - con)
+    rem_band = round(link - target_load, 2)
+    rem_con = con - target_con
+    row.append(rem_band)
+    #print("Remaining bandwidth: ", rem_band)
+    if method == "syn_flood":
+    #    print("Remaining connections: ", rem_con)
+        row.append(rem_con)
+    '''if s_down == 1:
         print("Server is          :  DOWN!!!")
     else:
-        print("Remaining bandwidth: ", round(link - target_load, 2))
-        if method == "syn_flood":
-            print("Remaining connections: ", con - target_con)
         print("Server is: UP")
+    '''
+    row.append(s_down)
 
 
 def main(argv):
@@ -170,10 +162,19 @@ def main(argv):
                 printHelp()
                 sys.exit()
 
-        for i in range (1,period):
-            print("\n\n####################")
-            print("Second: ", i)
-            print("####################")
+        if method == "dns_amp":
+            df = pd.DataFrame(columns=["second", "bot-->dns", "dns-->firewall",
+                                       "firewall-->target", "rem_bandwidth",
+                                       "server_down"])
+        elif method == "syn_flood":
+            df = pd.DataFrame(columns=["second", "bot-->firewall",
+                                       "firewall-->target", "rem_bandwidth",
+                                       "rem_connections", "server_down"])
+
+        for i in range (1,period+1):
+            #print("\n\n####################")
+            #print("Second: ", i)
+            #print("####################")
             if block_status == 0:
                 defense_clock = reactionClock(defense_clock, reaction)
                 if defense_clock == 0:
@@ -182,19 +183,28 @@ def main(argv):
                 attack_clock = reactionClock(attack_clock, reaction)
                 if attack_clock == 0:
                     block_status = 0
-            prev_attack_rand = newRand(prev_attack_rand,70)
+            prev_attack_rand = newRand(prev_attack_rand,75)
             prev_traffic_rand = newRand(prev_traffic_rand,50)
             prev_con_rand = newRand(prev_con_rand,50)
             if method == "dns_amp":
-                att_load = dns(attacker(n_bots, pkt_size, band, prev_attack_rand), amp_rate)
+                row = [i]
+                bot_load = attacker(n_bots, pkt_size, band, prev_attack_rand)
+                row.append(round(bot_load, 2))
+                att_load = dns(bot_load, amp_rate)
                 def_traffic = defaultTraffic(n_bots, pkt_size, band, 2, prev_traffic_rand)
-                firewall(method, att_load, def_traffic, block_status, link)
+                firewall(method, att_load, def_traffic, block_status, link, row)
             elif method == "syn_flood":
+                row = [i]
                 att_load = attacker(n_bots, pkt_size, band, prev_attack_rand)
                 def_traffic = defaultTraffic(n_bots, pkt_size, band, 1, prev_traffic_rand)
                 def_con = defaultCon(n_bots, band, 0.2, prev_con_rand)
                 att_con = attackerCon(n_bots, band, prev_attack_rand)
-                firewall(method, att_load, def_traffic, block_status, link, att_con, def_con, connections)
+                firewall(method, att_load, def_traffic, block_status, link, row, att_con, def_con, connections)
+
+            #print("LINHA:           ", row)
+            df.loc[len(df)] = row
+
+        print(df)
 
 
 if __name__ == "__main__":
